@@ -1,67 +1,62 @@
+import { User } from "../models/user.model.js";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import { User } from "../models/user.model.js";
 import getDataUri from "../utils/datauri.js";
 import cloudinary from "../utils/cloud.js";
-import { Op } from "sequelize";
 
-// REGISTER
 export const register = async (req, res) => {
   try {
     let { fullname, email, phoneNumber, password, adharcard, pancard, role } = req.body;
-    const file = req.file; // optional file
 
+    // Trim unwanted spaces
+    if (fullname) fullname = fullname.trim();
     if (email) email = email.trim();
     if (adharcard) adharcard = adharcard.trim();
     if (pancard) pancard = pancard.trim();
-    if (fullname) fullname = fullname.trim();
     if (role) role = role.trim();
 
-    // Required fields check (without file)
-    if (!fullname || !email || !phoneNumber || !password || !role || !adharcard || !pancard) {
-      return res.status(400).json({ message: "All fields are required (except profile photo)", success: false });
+    // Validation
+    if (!fullname || !email || !phoneNumber || !password || !adharcard || !pancard || !role) {
+      return res.status(400).json({ message: "All fields are required", success: false });
     }
 
     // Check existing user
-    const existingUser = await User.findOne({
-      where: { [Op.or]: [{ email }, { adharcard }, { pancard }] }
-    });
+    const existingUser = await User.findOne({ where: { email } });
     if (existingUser) {
-      return res.status(400).json({ message: "Email/Adhar/Pan already exists", success: false });
+      return res.status(409).json({ message: "User already exists", success: false });
+    }
+
+    // File Upload
+    let cloudResponse = null;
+    if (req.file) {
+      const fileUri = getDataUri(req.file);
+      cloudResponse = await cloudinary.uploader.upload(fileUri.content);
     }
 
     // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Optional: Cloudinary upload
-    let profilePhotoUrl = null;
-    if (file) {
-      try {
-        const fileUri = getDataUri(file);
-        const cloudResponse = await cloudinary.uploader.upload(fileUri.content);
-        profilePhotoUrl = cloudResponse.secure_url;
-      } catch (err) {
-        console.error("Cloudinary upload error:", err);
-        // continue without breaking registration
-      }
-    }
-
     // Create user
-    const newUser = await User.create({
+    const user = await User.create({
       fullname,
       email,
       phoneNumber,
+      password: hashedPassword,
       adharcard,
       pancard,
-      password: hashedPassword,
       role,
-      profilePhoto: profilePhotoUrl,
+      profilePhoto: cloudResponse?.secure_url || null,
     });
 
-    return res.status(201).json({ message: `Account created for ${fullname}`, success: true, user: newUser });
+    return res.status(201).json({
+      message: "User registered successfully",
+      success: true,
+      user,
+    });
+
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: "Server error", success: false });
+    console.error("REGISTER ERROR: ", error.message);
+    return res.status(500).json({ message: "Server error", success: false });
   }
 };
 
